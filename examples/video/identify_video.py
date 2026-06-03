@@ -74,7 +74,7 @@ def main():
         print("not a fixed-camera clip (no usable star motion) — "
               "re-run with --stream to overlay it the general way")
         return
-    us, n = render_video(source, out, sky)
+    us, n = render_video(source, out, sky, star_rings="--no-rings" not in flags)
     print(f"wrote {out}  ({n} frames, {1e6 / us:.0f} fps projection after solve)")
 
 

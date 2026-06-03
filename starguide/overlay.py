@@ -373,9 +373,14 @@ def annotate_image(sky_image, max_mag=None, style="auto", width=None,
     return vis
 
 
-def render_video(video_path, out_path, sky, max_mag=4.2, width=1366):
+def render_video(video_path, out_path, sky, max_mag=4.2, width=None,
+                 star_rings=True):
     """Realtime overlay video: every frame is one sidereal rotation + a poly
-    eval, demonstrating that after the one-time solve, tracking is ~free."""
+    eval, demonstrating that after the one-time solve, tracking is ~free.
+
+    `star_rings` draws a small, faint ring around each identified star (the
+    Sky-Guide touch — also a quick visual check that the dot really is that star);
+    set False for lines + labels only."""
     import time
     from .astro import load_catalog, horizon_altaz, load_constellations
     from .project import azimuthal_equidistant, rotate_uv
@@ -405,9 +410,14 @@ def render_video(video_path, out_path, sky, max_mag=4.2, width=1366):
 
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(5)
-    OW = width; OH = int(OW * H / W); sc = OW / W
+    OW = width or W            # default: render at the input's native resolution
+    OH = int(OW * H / W); sc = OW / W
     s2 = OW / 1100.0
-    gap, lt, fs = 6.0 * s2, max(1, round(s2)), 0.42 * s2   # line gap, thickness, font
+    # thin crisp lines, a tiny gap so they clearly run up to each star, and a
+    # font that scales with the (now full-HD) render. `rr`/`rt` size the subtle
+    # star rings.
+    gap, lt, fs = 1.6 * s2, max(1, round(s2 * 0.55)), 0.4 * s2
+    rr, rt = max(2, round(2.1 * s2)), max(1, round(s2 * 0.5))
     out = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (OW, OH))
     idx = 0; proj_us = []
     while True:
@@ -432,7 +442,14 @@ def render_video(video_path, out_path, sky, max_mag=4.2, width=1366):
                     p, q = _gapped(pos[a], pos[b], gap)
                     if p is not None:
                         cv2.line(layer, p, q, LINE, lt, cv2.LINE_AA)
-        vis = cv2.addWeighted(layer, 0.32, vis, 0.68, 0)
+        vis = cv2.addWeighted(layer, 0.5, vis, 0.5, 0)    # thin crisp lines, visible
+        if star_rings:                                    # subtle ring per star
+            rl = vis.copy()
+            for i in range(len(stars)):
+                if on[i]:
+                    cv2.circle(rl, (int(px[i] * sc), int(py[i] * sc)), rr, STAR,
+                               rt, cv2.LINE_AA)
+            vis = cv2.addWeighted(rl, 0.28, vis, 0.72, 0)
         tlayer = vis.copy()
         for i, s in enumerate(stars):
             if on[i] and s.mag < 2.4 and not s.name.startswith(("HIP", "HR ")):
