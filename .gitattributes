@@ -1,0 +1,15 @@
+# The bundled sample video is ~60 MB. It commits fine, but if you push to a host
+# that caps file size (GitHub warns at 50 MB), track the large media with Git LFS:
+#
+#   git lfs install
+#   git lfs track "examples/video/input/*.mp4" "examples/video/output/*.mp4"
+#   git add .gitattributes && git add --renormalize .
+#
+# Uncomment to enable once git-lfs is installed:
+# examples/video/input/*.mp4  filter=lfs diff=lfs merge=lfs -text
+# examples/video/output/*.mp4 filter=lfs diff=lfs merge=lfs -text
+
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.mov binary
