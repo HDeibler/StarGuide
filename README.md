@@ -5,7 +5,7 @@ photo or video and it tells you *which star is which* — labelling individual
 stars, constellations, and (given a date) planets, with **no manual calibration,
 no plate from elsewhere, no click-to-align**.
 
-![Orion, blind-solved from the star pattern alone](examples/image/output/orion_identified.jpg)
+![Before / after: a raw night-sky frame and the same frame identified by StarGuide](examples/image/output/readme_header.jpg)
 
 It is the identification counterpart to the rest of SkyStream: a detector says
 *"something is up there"*; StarGuide says *"that one is Betelgeuse, and that row
