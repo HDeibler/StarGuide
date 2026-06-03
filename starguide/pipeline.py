@@ -299,13 +299,15 @@ def identify(source, site: SiteConfig | None = None, mode: str = "auto",
 def _save_overlay(sky, path, style):
     """Render and write an annotated overlay for either result type."""
     import os
-    from .overlay import annotate_image, render
+    from .overlay import annotate_image, render, _resolve_style
     from .astro import load_catalog, horizon_altaz, load_constellations
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     if isinstance(sky, SkyImage):
         annotate_image(sky, style=style, out_path=path)
     else:
-        stars = load_catalog(max_mag=5.0)
+        st = _resolve_style(style, sky.stack_img.shape)
+        dm = st.display_mag()
+        stars = load_catalog(max_mag=dm if dm is not None else 5.0)
         alt, az = horizon_altaz(stars, sky.when_utc, sky.site, min_alt=0)
         bg = cv2.cvtColor(sky.stack_img.astype("uint8"), cv2.COLOR_GRAY2BGR)
         vis = render(bg, sky.model, stars, alt, az,

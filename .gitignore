@@ -21,3 +21,6 @@ out/
 # OS
 .DS_Store
 Thumbs.db
+
+# Catalog build cache (re-downloaded by tools/build_catalog.py)
+tools/.cache/

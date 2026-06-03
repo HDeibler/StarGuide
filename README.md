@@ -54,8 +54,10 @@ pip install -r requirements.txt        # numpy, scipy, opencv-python, astropy, P
 pip install -e .
 ```
 
-Python ≥ 3.10. The Hipparcos star catalog and constellation lines are bundled
-(`starguide/data/`) — no network, no API key.
+Python ≥ 3.10. A **25,713-star catalog (to magnitude 7.5), 450 proper star names,
+and all 88 IAU constellation figures** are bundled in `starguide/data/` — no
+network, no API key. (Sources and licenses: [`starguide/data/README.md`](starguide/data/README.md);
+regenerate with `python tools/build_catalog.py`.)
 
 ---
 
@@ -113,6 +115,34 @@ well-constrained. Nothing is drawn as a guess.
 
 It also runs **in reverse** — `when_from_planets(sky)` dates a photo from where a
 bright planet sits, good to within weeks near opposition.
+
+---
+
+## Controlling the overlay — verbosity & labels
+
+How much gets drawn is a single dial, `verbosity` (0 → 1): **0 draws nothing, 1
+shows and labels every star down to the catalog limit**, and in between it sets a
+magnitude cut for what's drawn. Which stars earn a *name* is `label_mode`:
+
+- **`importance`** (default) — the brightest stars (the ones that matter most),
+  tracking the same cut as the dots.
+- **`visibility`** — the stars that show most strongly in *this* frame (by SNR) —
+  useful when the brightest stars are behind cloud.
+- **`none`** — lines and dots, no names.
+
+```python
+from starguide import identify
+
+identify("photo.jpg", mode="image", save="out.png",
+         style={"verbosity": 1.0, "label_mode": "visibility"})
+```
+
+```bash
+python identify.py photo.jpg --image --verbosity 0.4 --label-mode importance
+```
+
+For full control, pass an `OverlayStyle` (every line, dot, colour and font is a
+field) — `OverlayStyle.pro(shape, verbosity=…, label_mode=…)`.
 
 ---
 

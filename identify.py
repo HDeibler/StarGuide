@@ -36,6 +36,14 @@ def main():
     mode = ("video" if "--video" in flags else
             "image" if "--image" in flags else "auto")
     style = _opt(flags, "--style", "auto")
+    # --verbosity 0..1 (how much to draw) and --label-mode importance|visibility|none
+    vb, lm = _opt(flags, "--verbosity"), _opt(flags, "--label-mode")
+    if vb is not None or lm is not None:
+        style = {"preset": style if style in ("pro", "classic") else "pro"}
+        if vb is not None:
+            style["verbosity"] = float(vb)
+        if lm is not None:
+            style["label_mode"] = lm
     os.makedirs("out", exist_ok=True)
     base = os.path.splitext(os.path.basename(source))[0]
     out = _opt(flags, "--out", f"out/{base}_identified.png")

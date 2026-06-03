@@ -21,6 +21,11 @@ CONST = (210, 188, 150)       # dimmer blue for constellation names
 PLANET = (90, 190, 255)
 CYAN = (235, 200, 70)         # kept for the bold 'classic' preset
 
+# Verbosity maps [0, 1] onto a magnitude window [brightest, faintest]. The faint
+# end is the bundled catalog depth (see tools/build_catalog.py).
+CATALOG_FAINT = 7.5
+BRIGHTEST_MAG = -1.6          # Sirius
+
 
 @dataclass
 class OverlayStyle:
@@ -54,22 +59,37 @@ class OverlayStyle:
     planet_color: tuple = (90, 200, 255)     # warm gold (BGR)
     planet_radius: float = 5.0
     planet_alpha: float = 0.9
+    # How MUCH to draw, and WHICH stars to name. `verbosity` is the master dial:
+    # 0 draws nothing, 1 shows and labels everything; in between it sets a
+    # magnitude cut for what's drawn and a budget for what's labelled.
+    # `label_mode` picks which stars earn a name — by catalog importance
+    # (brightness), by visibility (how strongly they show in THIS frame), only
+    # already-named stars, or none.
+    verbosity: float = 0.6
+    label_mode: str = "importance"      # 'importance' | 'visibility' | 'none'
+
+    def display_mag(self, faint: float = CATALOG_FAINT):
+        """Faintest magnitude to DRAW at this verbosity, or None to draw nothing.
+        v=0 -> None; v=1 -> the full catalog depth."""
+        v = max(0.0, min(1.0, self.verbosity))
+        return None if v <= 0.0 else BRIGHTEST_MAG + v * (faint - BRIGHTEST_MAG)
 
     @classmethod
-    def pro(cls, shape):
-        """Default professional styling, sized to the image."""
-        s = max(0.6, max(shape) / 1500.0)
+    def pro(cls, shape=None, verbosity: float = 0.6, label_mode: str = "importance"):
+        """Default professional styling, sized to the image (shape optional)."""
+        s = max(0.6, (max(shape) if shape else 1500) / 1500.0)
         return cls(
             line_thickness=max(1, round(1.1 * s)), line_gap=7.0 * s,
             star_radius=2.6 * s, min_star_radius=1.6 * s,
             label_scale=0.46 * s, label_thickness=max(1, round(0.95 * s)),
             label_offset=max(3, round(5 * s)),
-            constellation_label_scale=0.52 * s, title_scale=0.75 * s)
+            constellation_label_scale=0.52 * s, title_scale=0.75 * s,
+            verbosity=verbosity, label_mode=label_mode)
 
     auto = pro
 
     @classmethod
-    def classic(cls):
+    def classic(cls, verbosity: float = 0.7, label_mode: str = "importance"):
         return cls(line_color=CYAN, line_thickness=2, line_alpha=1.0,
                    line_gap=0.0, star_color=(120, 255, 140), star_radius=6.0,
                    star_thickness=2, star_alpha=1.0, min_star_radius=3.0,
@@ -77,14 +97,22 @@ class OverlayStyle:
                    label_color=(140, 255, 210), label_scale=0.7,
                    label_thickness=2, label_mag=2.8,
                    constellation_label_color=CYAN,
-                   constellation_label_scale=0.85, title_scale=1.1)
+                   constellation_label_scale=0.85, title_scale=1.1,
+                   verbosity=verbosity, label_mode=label_mode)
 
 
 def _resolve_style(style, shape):
+    """`style` may be None/'auto'/'pro'/'classic', an OverlayStyle, or a dict of
+    overrides like {'verbosity': 1.0, 'label_mode': 'visibility', 'preset': 'pro'}
+    — the dict form is sized to the image, so it's the easy way to set verbosity."""
     if style is None or style in ("auto", "pro"):
         return OverlayStyle.pro(shape)
     if style == "classic":
         return OverlayStyle.classic()
+    if isinstance(style, dict):
+        kw = {k: style[k] for k in ("verbosity", "label_mode") if k in style}
+        return (OverlayStyle.classic(**kw) if style.get("preset") == "classic"
+                else OverlayStyle.pro(shape, **kw))
     return style
 
 
@@ -121,11 +149,17 @@ def render(frame, model, stars, c1, c2, constellations=None, snr_ref=None,
         snr[idx] = sv
 
     visible = on if snr is None else on & (snr >= snr_min)
+    mags = np.array([s.mag for s in stars])
+    show_mag = st.display_mag()
+    if show_mag is None:                       # verbosity 0 -> draw nothing
+        return vis
     pos = {s.hip: (float(px[i]), float(py[i]))
            for i, s in enumerate(stars) if visible[i]}
 
     # Lines and rings are drawn on a separate layer, then alpha-blended in, so
     # they read as soft translucent ink over the photo rather than hard paint.
+    # Constellation lines are the figure structure: shown whenever the overlay is
+    # on. Star rings are density: only stars down to the verbosity magnitude cut.
     layer = vis.copy()
     members = set()
     max_len = st.max_line_frac * (W * W + H * H) ** 0.5
@@ -144,8 +178,9 @@ def render(frame, model, stars, c1, c2, constellations=None, snr_ref=None,
     vis = cv2.addWeighted(layer, st.line_alpha, vis, 1 - st.line_alpha, 0)
 
     ring = vis.copy()
+    shown = visible & (mags <= show_mag)
     for i, s in enumerate(stars):
-        if not visible[i] or (s.hip in members and not st.ring_constellation_stars):
+        if not shown[i] or (s.hip in members and not st.ring_constellation_stars):
             continue
         if st.brightness_scaled:
             r = int(max(st.min_star_radius, st.star_radius - s.mag * 1.4))
@@ -188,12 +223,24 @@ def render(frame, model, stars, c1, c2, constellations=None, snr_ref=None,
                     size=st.constellation_label_scale * 30,
                     color=st.constellation_label_color, alpha=0.62,
                     gap=st.label_offset, priority=1))
-    for i, s in enumerate(stars):
-        if visible[i] and s.mag <= st.label_mag \
-                and not s.name.startswith(("HIP", "HR ")):
-            items.append(dict(text=s.name, x=px[i], y=py[i],
-                              size=st.label_scale * 34, color=st.label_color,
-                              alpha=0.92, gap=st.label_offset, priority=0))
+    # WHICH stars get a name: only stars we *have* a name for, chosen by
+    # `label_mode`. 'importance' names the brightest — the same magnitude cut as
+    # the rings, so labels track what's drawn (v=1 names every named star shown).
+    # 'visibility' instead names the stars that show most strongly in THIS frame
+    # (top `verbosity` fraction by SNR) — useful when the brightest are clouded.
+    named = [i for i in range(len(stars))
+             if visible[i] and not stars[i].name.startswith(("HIP", "HR "))]
+    if st.label_mode == "none":
+        sel = []
+    elif st.label_mode == "visibility" and snr is not None:
+        named.sort(key=lambda i: -snr[i])              # clearest in this frame first
+        sel = named[:int(np.ceil(max(0.0, min(1.0, st.verbosity)) * len(named)))]
+    else:                                              # 'importance' (default)
+        sel = [i for i in named if mags[i] <= show_mag]
+    for i in sel:
+        items.append(dict(text=stars[i].name, x=px[i], y=py[i],
+                          size=st.label_scale * 34, color=st.label_color,
+                          alpha=0.92, gap=st.label_offset, priority=0))
     vis = _draw_labels(vis, items, obstacles)
 
     if title:
@@ -296,20 +343,26 @@ def _draw_labels(vis, items, obstacles):
     return cv2.cvtColor(np.asarray(out), cv2.COLOR_RGB2BGR)
 
 
-def annotate_image(sky_image, max_mag=5.0, style="auto", width=None,
+def annotate_image(sky_image, max_mag=None, style="auto", width=None,
                    out_path=None):
     """Render a labelled overlay for a one-off blind solve (gnomonic model).
 
-    `style` is 'auto' (subtle, default), 'classic', or an OverlayStyle. If
+    `style` is 'auto' (subtle, default), 'classic', or an OverlayStyle — it also
+    carries `verbosity` (how much to draw) and `label_mode` (which stars to name).
+    The catalog is loaded only as deep as the verbosity will actually draw. If
     `out_path` is given the image is written there (parent dirs created)."""
     import os
     from .astro import load_catalog, load_constellations
+    st = _resolve_style(style, sky_image.image.shape[:2])
+    if max_mag is None:
+        dm = st.display_mag()
+        max_mag = dm if dm is not None else 5.0
     stars = load_catalog(max_mag=max_mag)
     ra = np.array([s.ra for s in stars])
     dec = np.array([s.dec for s in stars])
-    # style at full image resolution so 'auto' sizing matches the photo
+    # resolved style passed through so 'auto' sizing matches the photo
     vis = render(sky_image.image, sky_image.model, stars, ra, dec,
-                 constellations=load_constellations(), style=style,
+                 constellations=load_constellations(), style=st,
                  base_stretch=False, planets=sky_image.planets)
     if width:
         H, W = vis.shape[:2]
@@ -351,8 +404,10 @@ def render_video(video_path, out_path, sky, max_mag=4.2, width=1366):
     omega = float(np.median(d)) / 200.0
 
     cap = cv2.VideoCapture(video_path)
-    fps = cap.get(5); N = int(cap.get(7))
+    fps = cap.get(5)
     OW = width; OH = int(OW * H / W); sc = OW / W
+    s2 = OW / 1100.0
+    gap, lt, fs = 6.0 * s2, max(1, round(s2)), 0.42 * s2   # line gap, thickness, font
     out = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (OW, OH))
     idx = 0; proj_us = []
     while True:
@@ -363,25 +418,28 @@ def render_video(video_path, out_path, sky, max_mag=4.2, width=1366):
         uv = rotate_uv(uv0, omega * idx / fps)
         px, py, _ = sky.model.project_uv(uv)
         proj_us.append((time.perf_counter() - t0) * 1e6)
-        vis = cv2.resize(stretch(f), (OW, OH))
+        vis = cv2.resize(f, (OW, OH))            # draw on the ORIGINAL frame, untouched
         on = (px > 0) & (px < W) & (py > 0) & (py < H) & vmask & keep
-        pos = {s.hip: (int(px[i] * sc), int(py[i] * sc))
+        pos = {s.hip: (float(px[i] * sc), float(py[i] * sc))
                for i, s in enumerate(stars) if on[i]}
-        for cn, prs in cons.items():
+        # Sky-Guide-like: faint translucent lines that stop short of each star, so
+        # the real stars in the footage stay the bright points. No rings painted
+        # over the stars; the dot you see is the actual star.
+        layer = vis.copy()
+        for prs in cons.values():
             for a, b in prs:
                 if a in pos and b in pos:
-                    cv2.line(vis, pos[a], pos[b], CYAN, 1, cv2.LINE_AA)
+                    p, q = _gapped(pos[a], pos[b], gap)
+                    if p is not None:
+                        cv2.line(layer, p, q, LINE, lt, cv2.LINE_AA)
+        vis = cv2.addWeighted(layer, 0.32, vis, 0.68, 0)
+        tlayer = vis.copy()
         for i, s in enumerate(stars):
-            if not on[i]:
-                continue
-            p = (int(px[i] * sc), int(py[i] * sc))
-            cv2.circle(vis, p, max(2, int(6 - s.mag)), STAR, 1, cv2.LINE_AA)
-            if s.mag < 2.6 and not s.name.startswith(("HIP", "HR ")):
-                cv2.putText(vis, s.name, (p[0] + 5, p[1] + 4),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, NAME, 1, cv2.LINE_AA)
-        cv2.putText(vis, f"StarGuide realtime  {idx+1}/{N}  proj {proj_us[-1]:.0f}us",
-                    (12, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1,
-                    cv2.LINE_AA)
+            if on[i] and s.mag < 2.4 and not s.name.startswith(("HIP", "HR ")):
+                x, y = int(px[i] * sc), int(py[i] * sc)
+                cv2.putText(tlayer, s.name, (x + 6, y + 3),
+                            cv2.FONT_HERSHEY_DUPLEX, fs, NAME, 1, cv2.LINE_AA)
+        vis = cv2.addWeighted(tlayer, 0.7, vis, 0.3, 0)
         out.write(vis); idx += 1
     cap.release(); out.release()
     return float(np.median(proj_us)), idx
